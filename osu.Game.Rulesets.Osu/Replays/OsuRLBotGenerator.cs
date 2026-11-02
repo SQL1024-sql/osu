@@ -237,6 +237,7 @@ namespace osu.Game.Rulesets.Osu.Replays
                 float dy = action[1];
                 bool nextKey1 = action[2] > 0;
                 bool nextKey2 = action[3] > 0;
+                double ft = t + DT; // as in env.step: the action observed at t lands on the next frame
 
                 // 8. Move Cursor
                 cursor.X = Math.Clamp(cursor.X + dx * stepSpeed, -100f, 612f);
@@ -255,7 +256,7 @@ namespace osu.Game.Rulesets.Osu.Replays
                         if (started[j] || h is Spinner)
                             continue;
 
-                        double timeOffset = t - h.StartTime;
+                        double timeOffset = ft - h.StartTime;
                         if (Math.Abs(timeOffset) <= w50 && Vector2.Distance(cursor, h.StackedPosition) <= radius)
                         {
                             started[j] = true;
@@ -276,7 +277,7 @@ namespace osu.Game.Rulesets.Osu.Replays
                 // 10. Update slider tracking state
                 if (activeSlider != null)
                 {
-                    double curProgress = Math.Clamp((t - activeSlider.StartTime) / activeSlider.Duration, 0.0, 1.0);
+                    double curProgress = Math.Clamp((ft - activeSlider.StartTime) / activeSlider.Duration, 0.0, 1.0);
                     Vector2 ballPos = activeSlider.StackedPositionAt(curProgress);
                     float followRadius = radius * FOLLOW_AREA;
                     bool inFollow = Vector2.Distance(cursor, ballPos) <= followRadius;
@@ -302,7 +303,7 @@ namespace osu.Game.Rulesets.Osu.Replays
                 if (nextKey1) actions.Add(OsuAction.LeftButton);
                 if (nextKey2) actions.Add(OsuAction.RightButton);
 
-                AddFrameToReplay(new OsuReplayFrame(Math.Round(t), cursor, actions.ToArray()));
+                AddFrameToReplay(new OsuReplayFrame(Math.Round(ft), cursor, actions.ToArray()));
 
                 key1 = nextKey1;
                 key2 = nextKey2;
