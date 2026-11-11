@@ -20,11 +20,8 @@ namespace osu.Desktop
 {
     public static class Program
     {
-#if DEBUG
-        private const string base_game_name = @"osu-development";
-#else
-        private const string base_game_name = @"osu";
-#endif
+        // osu_rl local fork: its own data folder (%APPDATA%\osu-rl), never the installed lazer's
+        private const string base_game_name = @"osu-rl";
 
         private static LegacyTcpIpcProvider? legacyIpc;
 
@@ -104,7 +101,7 @@ namespace osu.Desktop
 
             var hostOptions = new HostOptions
             {
-                IPCPipeName = !tournamentClient ? OsuGame.IPC_PIPE_NAME : null,
+                IPCPipeName = !tournamentClient ? OsuGame.IPC_PIPE_NAME + "-osu-rl" : null, // osu_rl: can run beside the installed lazer
                 FriendlyGameName = OsuGameBase.GAME_NAME,
             };
 

@@ -1075,6 +1075,8 @@ namespace osu.Game
             SkinManager.PostNotification = n => Notifications.Post(n);
             SkinManager.PresentImport = items => PresentSkin(items.First().Value);
 
+            startOsuRLBridge(); // osu_rl local fork
+
             BeatmapManager.PostNotification = n => Notifications.Post(n);
             BeatmapManager.PresentImport = items => PresentBeatmap(items.First().Value);
 
