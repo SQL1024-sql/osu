@@ -1755,7 +1755,7 @@ namespace osu.Game
 
             adjustGlobalScreenOffset();
 
-            GlobalCursorDisplay.ShowCursor = (ScreenStack.CurrentScreen as IOsuScreen)?.CursorVisible ?? false;
+            GlobalCursorDisplay.ShowCursor = ((ScreenStack.CurrentScreen as IOsuScreen)?.CursorVisible ?? false) && !osuRLHidesMenuCursor;
         }
 
         private float horizontalOffsetAdjust;

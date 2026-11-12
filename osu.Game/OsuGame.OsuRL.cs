@@ -17,6 +17,12 @@ namespace osu.Game
     {
         private OsuRLBridge? osuRLBridge;
 
+        // bridge setup "cursor": false (background plays): nobody is at the mouse, so outside gameplay no menu cursor
+        // follows it over the stream; in gameplay the play's own cursor (the student's) stays
+        private bool osuRLHideMenuCursor;
+
+        private bool osuRLHidesMenuCursor => osuRLHideMenuCursor && ScreenStack.CurrentScreen is not Player;
+
         private void startOsuRLBridge()
         {
             string? port = Environment.GetEnvironmentVariable("OSU_RL_BRIDGE");
@@ -68,7 +74,15 @@ namespace osu.Game
                         }
 
                         if ((string?)cmd["window"] == "borderless" && Host.Window != null)
+                        {
                             Host.Window.WindowMode.Value = WindowMode.Borderless; // stays up (fullscreen minimizes) when another window is in front
+                            // borderless covering the screen is fullscreen to SDL: without this it minimizes itself as soon as
+                            // another window (OBS, a browser) is clicked, and the capture gets no frames
+                            frameworkConfig.SetValue(FrameworkSetting.MinimiseOnFocusLossInFullscreen, false);
+                        }
+
+                        if (cmd["cursor"] != null)
+                            osuRLHideMenuCursor = !(bool)cmd["cursor"]!;
 
                         if (cmd["hud"] != null)
                             LocalConfig.SetValue(OsuSetting.HUDVisibilityMode, (bool)cmd["hud"]! ? HUDVisibilityMode.Always : HUDVisibilityMode.Never);

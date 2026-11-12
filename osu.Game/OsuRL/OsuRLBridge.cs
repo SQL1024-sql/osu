@@ -33,7 +33,9 @@ namespace osu.Game.OsuRL
         private readonly TcpListener listener;
         private readonly Func<JObject, JObject> handle;
         private readonly object writeLock = new object();
-        private StreamWriter? writer;
+        // every connected client gets the events: one that connects for a moment (a status check) must not take them
+        // away from the one running the plays
+        private readonly System.Collections.Generic.List<StreamWriter> writers = new System.Collections.Generic.List<StreamWriter>();
         private volatile bool stopped;
 
         /// <param name="handle">Runs a command and returns its reply; called on the bridge thread (schedule game work).</param>
@@ -62,7 +64,7 @@ namespace osu.Game.OsuRL
                 }
 
                 client.NoDelay = true;
-                // a new client replaces the old one
+                // clients side by side: each gets replies to its own commands, all get the events
                 new Thread(() => serve(client)) { IsBackground = true, Name = "osu_rl bridge client" }.Start();
             }
         }
@@ -76,7 +78,7 @@ namespace osu.Game.OsuRL
                 var w = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
 
                 lock (writeLock)
-                    writer = w;
+                    writers.Add(w);
 
                 try
                 {
@@ -118,27 +120,33 @@ namespace osu.Game.OsuRL
                 finally
                 {
                     lock (writeLock)
-                    {
-                        if (writer == w)
-                            writer = null;
-                    }
+                        writers.Remove(w);
                 }
             }
         }
 
-        public bool Connected => writer != null;
+        public bool Connected
+        {
+            get
+            {
+                lock (writeLock)
+                    return writers.Count > 0;
+            }
+        }
 
         /// <summary>Where "input" commands go: the play that takes bridge input, while there is one.</summary>
         public volatile IOsuRLInput? Input;
 
-        /// <summary>Sends an event to the client, if one is connected (from any thread).</summary>
+        /// <summary>Sends an event to every connected client (from any thread).</summary>
         public void Send(object ev)
         {
-            StreamWriter? w = writer;
-            if (w == null)
-                return;
+            string text = JsonConvert.SerializeObject(ev);
 
-            writeLine(w, JsonConvert.SerializeObject(ev));
+            lock (writeLock)
+            {
+                foreach (var w in writers.ToArray())
+                    writeLine(w, text);
+            }
         }
 
         private void writeLine(StreamWriter w, string text)
@@ -151,8 +159,7 @@ namespace osu.Game.OsuRL
                 }
                 catch (Exception)
                 {
-                    if (writer == w)
-                        writer = null;
+                    writers.Remove(w);
                 }
             }
         }
