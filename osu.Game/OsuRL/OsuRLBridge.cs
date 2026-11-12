@@ -7,6 +7,11 @@
 //   {"cmd":"setup","skin":"<skin name>","hud":false}             skin by name, HUD always hidden or shown
 //   {"cmd":"play","md5":"<beatmap md5>","mods":["NF"],"out":"<file.json>"}
 //   {"cmd":"menu"}                                               back to song select
+//   {"cmd":"focus"}                                              bring the window back in front
+//   {"cmd":"input","x":256,"y":192,"b":1}                        (no reply) a play started with "input":"bridge":
+//                                                                cursor in osu! pixels, held buttons (bit 0: M1, 1: M2)
+// "play" also takes "input":"bridge": the play is driven by input commands, not the mouse, and goes on when the
+// window is not in front.
 // Events, while playing: {"ev":"state","state":"loading|playing|paused|done"}, {"ev":"clock","qpc":s,"t":ms}
 // (qpc: Stopwatch.GetTimestamp() in seconds, the same clock as Python's time.perf_counter on Windows; t: gameplay
 // time), {"ev":"judge",...} per judgement, and {"ev":"done","file":...,"accuracy":...} with everything written to "out".
@@ -87,6 +92,14 @@ namespace osu.Game.OsuRL
                         try
                         {
                             var cmd = JObject.Parse(line);
+
+                            if ((string?)cmd["cmd"] == "input")
+                            {
+                                // gameplay input, up to a few hundred a second: straight to the play, no reply
+                                Input?.Push((float)cmd["x"]!, (float)cmd["y"]!, (int?)cmd["b"] ?? 0);
+                                continue;
+                            }
+
                             reply = handle(cmd);
                             if (cmd["id"] != null)
                                 reply["id"] = cmd["id"];
@@ -114,6 +127,9 @@ namespace osu.Game.OsuRL
         }
 
         public bool Connected => writer != null;
+
+        /// <summary>Where "input" commands go: the play that takes bridge input, while there is one.</summary>
+        public volatile IOsuRLInput? Input;
 
         /// <summary>Sends an event to the client, if one is connected (from any thread).</summary>
         public void Send(object ev)

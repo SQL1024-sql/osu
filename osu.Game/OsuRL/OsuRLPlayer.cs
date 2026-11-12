@@ -5,8 +5,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Newtonsoft.Json;
+using osu.Framework.Input;
 using osu.Framework.Screens;
+using osu.Game.Input.Handlers;
+using osu.Game.Rulesets.UI;
 using osu.Game.Rulesets.Judgements;
 using osu.Game.Rulesets.Objects.Types;
 using osu.Game.Rulesets.Replays.Types;
@@ -25,10 +29,48 @@ namespace osu.Game.OsuRL
         private string state = "loading";
         private bool written;
 
-        public OsuRLPlayer(OsuRLBridge bridge, string? outPath)
+        private readonly bool bridgeInput;
+        private PassThroughInputManager? rulesetInput;
+
+        /// <param name="bridgeInput">Gameplay input from the bridge ("input" commands) instead of the mouse; the play
+        /// also goes on when the window is not in front.</param>
+        public OsuRLPlayer(OsuRLBridge bridge, string? outPath, bool bridgeInput = false)
         {
             this.bridge = bridge;
             this.outPath = outPath;
+            this.bridgeInput = bridgeInput;
+        }
+
+        protected override bool PauseOnFocusLost => !bridgeInput;
+
+        private void attachBridgeInput()
+        {
+            // the ruleset's own input manager (RulesetInputManager<TAction>), which takes a replay handler in place of the mouse
+            object? manager = null;
+
+            for (var t = DrawableRuleset.GetType(); t != null && manager == null; t = t.BaseType)
+                manager = t.GetProperty("KeyBindingInputManager", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)?.GetValue(DrawableRuleset);
+
+            if (manager is not IHasReplayHandler replayManager || manager is not PassThroughInputManager passThrough)
+                throw new InvalidOperationException("the ruleset's input manager does not take a replay handler");
+
+            Type? rim = manager.GetType();
+            while (rim != null && !(rim.IsGenericType && rim.GetGenericTypeDefinition() == typeof(RulesetInputManager<>)))
+                rim = rim.BaseType;
+            if (rim == null)
+                throw new InvalidOperationException("no RulesetInputManager<TAction>");
+
+            Type action = rim.GetGenericArguments()[0];
+            Array all = Enum.GetValues(action);
+            Array buttons = Array.CreateInstance(action, Math.Min(2, all.Length)); // osu!: LeftButton, RightButton
+            for (int i = 0; i < buttons.Length; i++)
+                buttons.SetValue(all.GetValue(i), i);
+
+            var handler = (ReplayInputHandler)Activator.CreateInstance(typeof(OsuRLInputHandler<>).MakeGenericType(action), buttons)!;
+            handler.GamefieldToScreenSpace = DrawableRuleset.Playfield.GamefieldToScreenSpace;
+            replayManager.ReplayInputHandler = handler;
+            rulesetInput = passThrough;
+            bridge.Input = (IOsuRLInput)handler;
         }
 
         public static double Qpc => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
@@ -36,6 +78,9 @@ namespace osu.Game.OsuRL
         protected override void LoadComplete()
         {
             base.LoadComplete();
+
+            if (bridgeInput)
+                attachBridgeInput();
 
             ScoreProcessor.NewJudgement += onJudgement;
             ScoreProcessor.HasCompleted.BindValueChanged(c =>
@@ -63,6 +108,10 @@ namespace osu.Game.OsuRL
         protected override void Update()
         {
             base.Update();
+
+            // unpausing hands the mouse back to the ruleset (DrawableRuleset.IsPaused); with bridge input it must not
+            if (rulesetInput != null && rulesetInput.UseParentInput)
+                rulesetInput.UseParentInput = false;
 
             if (GameplayClockContainer == null || written)
                 return;
@@ -103,6 +152,8 @@ namespace osu.Game.OsuRL
                 return;
 
             written = true;
+            if (bridgeInput)
+                bridge.Input = null;
             setState("done");
 
             var score = Score.ScoreInfo;

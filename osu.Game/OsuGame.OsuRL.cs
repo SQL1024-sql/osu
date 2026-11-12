@@ -4,6 +4,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using Newtonsoft.Json.Linq;
+using osu.Framework.Configuration;
 using osu.Framework.Screens;
 using osu.Game.Configuration;
 using osu.Game.OsuRL;
@@ -23,6 +24,10 @@ namespace osu.Game
                 return;
 
             osuRLBridge = new OsuRLBridge(int.Parse(port), osuRLCommand);
+
+            // plays driven by the bridge go on in the background: no frame rate drop, no fading the music
+            Host.MaximumInactiveHz = 1000;
+            LocalConfig.SetValue(OsuSetting.VolumeInactive, 1.0);
         }
 
         /// <summary>Runs on the bridge thread: game work is scheduled on the update thread and waited for.</summary>
@@ -62,6 +67,9 @@ namespace osu.Game
                             SkinManager.CurrentSkinInfo.Value = skin;
                         }
 
+                        if ((string?)cmd["window"] == "borderless" && Host.Window != null)
+                            Host.Window.WindowMode.Value = WindowMode.Borderless; // stays up (fullscreen minimizes) when another window is in front
+
                         if (cmd["hud"] != null)
                             LocalConfig.SetValue(OsuSetting.HUDVisibilityMode, (bool)cmd["hud"]! ? HUDVisibilityMode.Always : HUDVisibilityMode.Never);
 
@@ -72,6 +80,7 @@ namespace osu.Game
                     string md5 = (string)cmd["md5"]!;
                     string[] acronyms = cmd["mods"]?.Select(m => (string)m!).ToArray() ?? Array.Empty<string>();
                     string? outPath = (string?)cmd["out"];
+                    bool bridgeInput = (string?)cmd["input"] == "bridge";
                     var beatmap = BeatmapManager.QueryBeatmap(b => b.MD5Hash == md5);
                     if (beatmap == null)
                         return new JObject { ["ok"] = false, ["error"] = $"no beatmap with MD5 {md5} (import it first)" };
@@ -88,7 +97,8 @@ namespace osu.Game
                             var ruleset = beatmap.Ruleset.CreateInstance();
                             var mods = acronyms.Select(a => ruleset.CreateModFromAcronym(a) ?? throw new ArgumentException($"no mod {a}")).ToArray();
                             SelectedMods.Value = mods;
-                            ScreenStack.CurrentScreen.Push(new PlayerLoader(() => new OsuRLPlayer(osuRLBridge!, outPath)));
+                            Func<Player> create = () => new OsuRLPlayer(osuRLBridge!, outPath, bridgeInput);
+                            ScreenStack.CurrentScreen.Push(bridgeInput ? new OsuRLPlayerLoader(create) : new PlayerLoader(create));
                         }
                         catch (Exception e)
                         {
@@ -104,6 +114,13 @@ namespace osu.Game
                         return new JObject { ["ok"] = false, ["error"] = "the game did not get to a screen to start from in 20 s" };
 
                     return error == null ? new JObject { ["ok"] = true, ["map"] = beatmap.ToString() } : new JObject { ["ok"] = false, ["error"] = error };
+
+                case "focus":
+                    // bring the game back in front (a notification or another program took the focus). Windows only
+                    // lets the foreground thread hand the focus over, so join its input queue for the moment
+                    bool front = OsuRLForeground.Bring();
+                    Thread.Sleep(200);
+                    return onGame(() => new JObject { ["ok"] = true, ["front"] = front, ["active"] = Host.IsActive.Value });
 
                 case "menu":
                     Schedule(() => PerformFromScreen(_ => { }, new[] { typeof(SongSelect) }));
