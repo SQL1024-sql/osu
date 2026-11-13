@@ -99,9 +99,15 @@ namespace osu.Desktop
                 }
             }
 
+            // osu_rl: OSU_RL_INSTANCE=N (N > 0) runs another copy beside the first, with its own data folder
+            // (%APPDATA%\osu-rl-N) and IPC pipe, so several can play at once (each with its own OSU_RL_BRIDGE port)
+            string? rlInstance = Environment.GetEnvironmentVariable("OSU_RL_INSTANCE");
+            if (!tournamentClient && !string.IsNullOrEmpty(rlInstance) && rlInstance != "0")
+                gameName = $"{base_game_name}-{rlInstance}";
+
             var hostOptions = new HostOptions
             {
-                IPCPipeName = !tournamentClient ? OsuGame.IPC_PIPE_NAME + "-osu-rl" : null, // osu_rl: can run beside the installed lazer
+                IPCPipeName = !tournamentClient ? OsuGame.IPC_PIPE_NAME + "-" + gameName : null, // osu_rl: can run beside the installed lazer
                 FriendlyGameName = OsuGameBase.GAME_NAME,
             };
 

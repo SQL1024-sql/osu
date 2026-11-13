@@ -51,6 +51,7 @@ namespace osu.Game
                         ["map"] = Beatmap.Value.BeatmapInfo.ToString(),
                         ["md5"] = Beatmap.Value.BeatmapInfo.MD5Hash,
                         ["active"] = Host.IsActive.Value,
+                        ["pid"] = Environment.ProcessId, // which window is this copy's when several run
                     });
 
                 case "import":
