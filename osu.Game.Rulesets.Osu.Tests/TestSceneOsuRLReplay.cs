@@ -13,6 +13,7 @@ using osu.Game.Beatmaps;
 using osu.Game.Beatmaps.Formats;
 using osu.Game.IO;
 using osu.Game.Rulesets.Judgements;
+using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Objects;
 using osu.Game.Scoring;
 using osu.Game.Scoring.Legacy;
@@ -57,12 +58,21 @@ namespace osu.Game.Rulesets.Osu.Tests
                     using (var s = File.OpenRead(replay))
                         score = new FileScoreDecoder(Beatmap.Value, mapMd5).Parse(s);
 
+                    // stable-format replays come with Classic; OSU_RL_NO_CLASSIC judges them by an online room's rules (no mods)
+                    bool room = Environment.GetEnvironmentVariable("OSU_RL_NO_CLASSIC") == "1";
+                    if (room)
+                        score.ScoreInfo.Mods = Array.Empty<Mod>();
                     SelectedMods.Value = score.ScoreInfo.Mods;
                     var p = player = new ReplayPlayer(score);
-                    p.OnLoadComplete += _ => p.GameplayState.ScoreProcessor.NewJudgement += r =>
+                    p.OnLoadComplete += _ =>
                     {
-                        if (player == p)
-                            results.Add(r);
+                        // as MultiplayerPlayer: judgements keep scoring after health runs out
+                        p.GameplayState.ScoreProcessor.ApplyNewJudgementsWhenFailed = room;
+                        p.GameplayState.ScoreProcessor.NewJudgement += r =>
+                        {
+                            if (player == p)
+                                results.Add(r);
+                        };
                     };
                     results.Clear();
                     LoadScreen(p);
@@ -84,7 +94,7 @@ namespace osu.Game.Rulesets.Osu.Tests
                 AddStep("write results", () =>
                 {
                     var sp = player.GameplayState.ScoreProcessor;
-                    File.WriteAllLines(output, new[] { $"# accuracy={sp.Accuracy.Value},max_combo={sp.HighestCombo.Value},mods={string.Join('|', sp.Mods.Value.Select(m => m.Acronym))}" }
+                    File.WriteAllLines(output, new[] { $"# accuracy={sp.Accuracy.Value},max_combo={sp.HighestCombo.Value},failed={player.GameplayState.HasFailed},mods={string.Join('|', sp.Mods.Value.Select(m => m.Acronym))}" }
                         .Concat(results.Select(r => $"{r.HitObject.StartTime},{r.HitObject.GetType().Name},{r.Type},{r.TimeOffset}")));
                 });
             }
