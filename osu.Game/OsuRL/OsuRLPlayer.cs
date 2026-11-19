@@ -10,6 +10,7 @@ using Newtonsoft.Json;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Input;
 using osu.Framework.Screens;
+using osu.Framework.Testing;
 using osu.Game.Input.Handlers;
 using osu.Game.Online.API;
 using osu.Game.Online.Rooms;
@@ -19,6 +20,7 @@ using osu.Game.Rulesets.Objects;
 using osu.Game.Rulesets.Objects.Types;
 using osu.Game.Rulesets.Replays.Types;
 using osu.Game.Screens.Play;
+using osu.Game.Screens.Play.HUD.HitErrorMeters;
 using osuTK;
 
 namespace osu.Game.OsuRL
@@ -36,6 +38,7 @@ namespace osu.Game.OsuRL
         private readonly bool bridgeInput;
         private PassThroughInputManager? rulesetInput;
         private double objectsFrom = double.NegativeInfinity, objectsTo = double.PositiveInfinity;
+        private double lastMeterCheck = double.NegativeInfinity;
 
         /// <param name="bridgeInput">Gameplay input from the bridge ("input" commands) instead of the mouse; the play
         /// also goes on when the window is not in front.</param>
@@ -142,6 +145,15 @@ namespace osu.Game.OsuRL
                     cursor.Show();
                 else if (!on && cursor.State.Value == Visibility.Visible)
                     cursor.Hide();
+            }
+
+            // the hit error bar sits on the bottom edge of the student's frame (live.stream shows the HUD to viewers):
+            // not drawn in a bridge play. Looked for twice a second, as the HUD's skin components load on their own
+            if (rulesetInput != null && Time.Current - lastMeterCheck >= 500)
+            {
+                lastMeterCheck = Time.Current;
+                foreach (var meter in HUDOverlay.ChildrenOfType<HitErrorMeter>())
+                    meter.Alpha = 0;
             }
 
             if (GameplayClockContainer == null || written)
