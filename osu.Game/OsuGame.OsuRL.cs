@@ -23,11 +23,14 @@ namespace osu.Game
         private OsuRLBridge? osuRLBridge;
         private OsuRLWatcher? osuRLWatcher;
 
-        // bridge setup "cursor": false (background plays): nobody is at the mouse, so outside gameplay no menu cursor
-        // follows it over the stream; in gameplay the play's own cursor (the student's) stays
+        // bridge setup "cursor": false (background plays): nobody is at the mouse, so no menu cursor follows it over the
+        // stream. In a bridge play too: its input is a replay handler, so the ruleset stops providing the cursor and the
+        // menu arrow would follow the real mouse over the map; the play's own cursor (the student's) is the playfield's,
+        // kept shown by OsuRLPlayer. A person's play (any other Player) keeps its cursor.
         private bool osuRLHideMenuCursor;
 
-        private bool osuRLHidesMenuCursor => osuRLHideMenuCursor && ScreenStack.CurrentScreen is not Player && !osuRLInOnlinePlay;
+        private bool osuRLHidesMenuCursor =>
+            osuRLHideMenuCursor && (ScreenStack.CurrentScreen is not Player || ScreenStack.CurrentScreen is OsuRLPlayer) && !osuRLInOnlinePlay;
 
         // lazer's multiplayer and playlists: the lounge, a room and its song select, its player and results, spectating a
         // room. The same copy sits in rooms (live.room_play) and plays maps of its own between them (live.stream): a

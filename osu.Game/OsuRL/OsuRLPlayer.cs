@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json;
+using osu.Framework.Graphics.Containers;
 using osu.Framework.Input;
 using osu.Framework.Screens;
 using osu.Game.Input.Handlers;
@@ -118,6 +119,11 @@ namespace osu.Game.OsuRL
             // unpausing hands the mouse back to the ruleset (DrawableRuleset.IsPaused); with bridge input it must not
             if (rulesetInput != null && rulesetInput.UseParentInput)
                 rulesetInput.UseParentInput = false;
+
+            // lazer shows the ruleset's cursor only while the real mouse hovers the playfield (GlobalCursorDisplay), and
+            // with bridge input nobody is at the mouse: keep the student's cursor shown, wherever the mouse is
+            if (rulesetInput != null && DrawableRuleset.Playfield.Cursor is { } cursor && cursor.State.Value != Visibility.Visible)
+                cursor.Show();
 
             if (GameplayClockContainer == null || written)
                 return;
