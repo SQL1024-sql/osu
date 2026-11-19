@@ -5,8 +5,14 @@
 //   {"cmd":"status"}
 //   {"cmd":"import","paths":["...osz","...osk"]}
 //   {"cmd":"setup","skin":"<skin name>","hud":false}             skin by name, HUD always hidden or shown
+//                                                                ("background":false: the beatmap background black in any play)
 //   {"cmd":"play","md5":"<beatmap md5>","mods":["NF"],"out":"<file.json>"}
 //   {"cmd":"menu"}                                               back to song select
+//   ("play" and "menu" refuse while the game is in multiplayer or playlists: they would take it out of the room)
+//   {"cmd":"rooms"}                                              the open multiplayer rooms (id, name, host, ...)
+//   {"cmd":"join","room_id":8,"password":"..."}                  into that room the way a link does (status "multi" when in)
+//   {"cmd":"ready"}                                              ready up in the room, once its map is downloaded
+//   {"cmd":"leave"}                                              out of the room and multiplayer, to the main menu
 //   {"cmd":"focus"}                                              bring the window back in front
 //   {"cmd":"input","x":256,"y":192,"b":1}                        (no reply) a play started with "input":"bridge":
 //                                                                cursor in osu! pixels, held buttons (bit 0: M1, 1: M2)

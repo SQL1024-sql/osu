@@ -10,6 +10,8 @@ using Newtonsoft.Json;
 using osu.Framework.Input;
 using osu.Framework.Screens;
 using osu.Game.Input.Handlers;
+using osu.Game.Online.API;
+using osu.Game.Online.Rooms;
 using osu.Game.Rulesets.UI;
 using osu.Game.Rulesets.Judgements;
 using osu.Game.Rulesets.Objects.Types;
@@ -42,6 +44,10 @@ namespace osu.Game.OsuRL
         }
 
         protected override bool PauseOnFocusLost => !bridgeInput;
+
+        // a bot's play: never submitted to any osu! server, even when this game is logged in (SoloPlayer does not exit
+        // without a token, it only skips submitting)
+        protected override APIRequest<APIScoreToken>? CreateTokenRequest() => null;
 
         private void attachBridgeInput()
         {

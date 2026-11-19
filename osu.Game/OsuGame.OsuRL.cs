@@ -7,7 +7,12 @@ using Newtonsoft.Json.Linq;
 using osu.Framework.Configuration;
 using osu.Framework.Screens;
 using osu.Game.Configuration;
+using osu.Game.Online;
+using osu.Game.Online.Multiplayer;
+using osu.Game.Online.Rooms;
 using osu.Game.OsuRL;
+using osu.Game.Screens.Menu;
+using osu.Game.Screens.OnlinePlay.Lounge.Components;
 using osu.Game.Screens.Play;
 using osu.Game.Screens.Select;
 
@@ -16,12 +21,24 @@ namespace osu.Game
     public partial class OsuGame
     {
         private OsuRLBridge? osuRLBridge;
+        private OsuRLWatcher? osuRLWatcher;
 
         // bridge setup "cursor": false (background plays): nobody is at the mouse, so outside gameplay no menu cursor
         // follows it over the stream; in gameplay the play's own cursor (the student's) stays
         private bool osuRLHideMenuCursor;
 
-        private bool osuRLHidesMenuCursor => osuRLHideMenuCursor && ScreenStack.CurrentScreen is not Player;
+        private bool osuRLHidesMenuCursor => osuRLHideMenuCursor && ScreenStack.CurrentScreen is not Player && !osuRLInOnlinePlay;
+
+        // lazer's multiplayer and playlists: the lounge, a room and its song select, its player and results, spectating a
+        // room. The same copy sits in rooms (live.room_play) and plays maps of its own between them (live.stream): a
+        // person runs the room (cursor shown), and "play" / "menu" would take the game out of it, so they refuse
+        private bool osuRLInOnlinePlay =>
+            ScreenStack.CurrentScreen?.GetType().Namespace?.StartsWith("osu.Game.Screens.OnlinePlay", StringComparison.Ordinal) == true;
+
+        // OSU_RL_LAZER_SERVER (a private server, see DevelopmentEndpointConfiguration) is used by a release build too:
+        // without this a release build always talks to the official servers, where the AI must never play
+        public override bool UseDevelopmentServer =>
+            base.UseDevelopmentServer || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OSU_RL_LAZER_SERVER"));
 
         private void startOsuRLBridge()
         {
@@ -30,10 +47,21 @@ namespace osu.Game
                 return;
 
             osuRLBridge = new OsuRLBridge(int.Parse(port), osuRLCommand);
+            Add(osuRLWatcher = new OsuRLWatcher(osuRLBridge, () => ScreenStack)); // any play, multiplayer too (live.room_play)
 
             // plays driven by the bridge go on in the background: no frame rate drop, no fading the music
             Host.MaximumInactiveHz = 1000;
             LocalConfig.SetValue(OsuSetting.VolumeInactive, 1.0);
+        }
+
+        private string? osuRLBeatmapFile()
+        {
+            string hash = Beatmap.Value.BeatmapInfo.Hash;
+            if (string.IsNullOrEmpty(hash) || hash.Length < 3)
+                return null;
+
+            string path = Storage.GetFullPath(System.IO.Path.Combine("files", hash.Remove(1), hash.Remove(2), hash));
+            return System.IO.File.Exists(path) ? path : null;
         }
 
         /// <summary>Runs on the bridge thread: game work is scheduled on the update thread and waited for.</summary>
@@ -50,8 +78,85 @@ namespace osu.Game
                         ["screen"] = ScreenStack.CurrentScreen?.GetType().Name,
                         ["map"] = Beatmap.Value.BeatmapInfo.ToString(),
                         ["md5"] = Beatmap.Value.BeatmapInfo.MD5Hash,
+                        ["beatmap_id"] = Beatmap.Value.BeatmapInfo.OnlineID,
+                        // the selected map's .osu in the game's file store (named by its SHA-256, which is BeatmapInfo.Hash)
+                        ["osu"] = osuRLBeatmapFile(),
                         ["active"] = Host.IsActive.Value,
                         ["pid"] = Environment.ProcessId, // which window is this copy's when several run
+                        // which server and account this copy plays on (live.room_play refuses any but the AI's own)
+                        ["server"] = API.Endpoints.APIUrl,
+                        ["user"] = API.LocalUser.Value?.Username,
+                        ["online"] = API.State.Value.ToString(),
+                        // the multiplayer room this copy is in (live.room_play readies up when the map is there)
+                        ["multi"] = osuRLMultiplayerStatus(),
+                    });
+
+                case "rooms":
+                    // the open multiplayer rooms on the server (what the lounge lists), for picking one to join
+                    var roomsRequest = new GetRoomsRequest(new LoungeFilterCriteria());
+                    API.Perform(roomsRequest);
+                    var rooms = new JArray();
+                    foreach (var r in roomsRequest.Response ?? new System.Collections.Generic.List<Room>())
+                    {
+                        if (r.Type == MatchType.Playlists)
+                            continue;
+
+                        rooms.Add(new JObject
+                        {
+                            ["id"] = r.RoomID,
+                            ["name"] = r.Name,
+                            ["host"] = r.Host?.Username,
+                            ["has_password"] = r.HasPassword,
+                            ["participants"] = r.ParticipantCount,
+                            ["status"] = r.Status.GetType().Name,
+                        });
+                    }
+
+                    return new JObject { ["ok"] = true, ["rooms"] = rooms };
+
+                case "join":
+                    // into a multiplayer room the way a link to it does (the lounge, then the room's screen); the join
+                    // itself goes on in the game: status "multi" says when it is in
+                    long joinId = (long)cmd["room_id"]!;
+                    string joinPassword = (string?)cmd["password"] ?? string.Empty;
+                    var roomRequest = new GetRoomRequest(joinId);
+                    API.Perform(roomRequest);
+                    var joinRoom = roomRequest.Response;
+                    if (joinRoom == null)
+                        return new JObject { ["ok"] = false, ["error"] = $"no room {joinId}" };
+                    if (joinRoom.Type == MatchType.Playlists)
+                        return new JObject { ["ok"] = false, ["error"] = $"room {joinId} is a playlist, not a multiplayer room" };
+                    if (joinRoom.HasEnded)
+                        return new JObject { ["ok"] = false, ["error"] = $"room {joinId} has ended" };
+
+                    Schedule(() => PresentMultiplayerMatch(joinRoom, joinPassword));
+                    return new JObject { ["ok"] = true, ["room"] = joinRoom.Name };
+
+                case "ready":
+                    // ready up in the room (only once the map is downloaded; lazer fetches a missing one itself)
+                    return onGame(() =>
+                    {
+                        var me = MultiplayerClient.LocalUser;
+                        if (MultiplayerClient.Room == null || me == null)
+                            return new JObject { ["ok"] = false, ["error"] = "not in a multiplayer room" };
+                        if (me.State != MultiplayerUserState.Idle)
+                            return new JObject { ["ok"] = true, ["state"] = me.State.ToString() };
+                        if (me.BeatmapAvailability.State != DownloadState.LocallyAvailable)
+                            return new JObject { ["ok"] = false, ["error"] = $"the map is not here yet ({me.BeatmapAvailability.State})" };
+
+                        MultiplayerClient.ToggleReady().FireAndForget();
+                        return new JObject { ["ok"] = true, ["state"] = "Ready" };
+                    });
+
+                case "leave":
+                    // out of the room and lazer's multiplayer screens, back to the main menu ("menu" refuses there)
+                    return onGame(() =>
+                    {
+                        if (!osuRLInOnlinePlay)
+                            return new JObject { ["ok"] = true, ["left"] = false };
+
+                        PerformFromScreen(_ => { }, new[] { typeof(MainMenu) });
+                        return new JObject { ["ok"] = true, ["left"] = true };
                     });
 
                 case "import":
@@ -85,6 +190,9 @@ namespace osu.Game
                         if (cmd["cursor"] != null)
                             osuRLHideMenuCursor = !(bool)cmd["cursor"]!;
 
+                        if (cmd["background"] != null && osuRLWatcher != null)
+                            osuRLWatcher.HideBackground = !(bool)cmd["background"]!;
+
                         if (cmd["hud"] != null)
                             LocalConfig.SetValue(OsuSetting.HUDVisibilityMode, (bool)cmd["hud"]! ? HUDVisibilityMode.Always : HUDVisibilityMode.Never);
 
@@ -103,27 +211,37 @@ namespace osu.Game
                     var started = new ManualResetEventSlim();
                     string? error = null;
 
-                    Schedule(() => PerformFromScreen(_ =>
+                    Schedule(() =>
                     {
-                        try
+                        if (osuRLInOnlinePlay)
                         {
-                            Ruleset.Value = beatmap.Ruleset;
-                            Beatmap.Value = BeatmapManager.GetWorkingBeatmap(beatmap);
-                            var ruleset = beatmap.Ruleset.CreateInstance();
-                            var mods = acronyms.Select(a => ruleset.CreateModFromAcronym(a) ?? throw new ArgumentException($"no mod {a}")).ToArray();
-                            SelectedMods.Value = mods;
-                            Func<Player> create = () => new OsuRLPlayer(osuRLBridge!, outPath, bridgeInput);
-                            ScreenStack.CurrentScreen.Push(bridgeInput ? new OsuRLPlayerLoader(create) : new PlayerLoader(create));
-                        }
-                        catch (Exception e)
-                        {
-                            error = e.Message;
-                        }
-                        finally
-                        {
+                            error = "the game is in multiplayer: a map of its own would take it out of the room";
                             started.Set();
+                            return;
                         }
-                    }, new[] { typeof(SongSelect) }));
+
+                        PerformFromScreen(_ =>
+                        {
+                            try
+                            {
+                                Ruleset.Value = beatmap.Ruleset;
+                                Beatmap.Value = BeatmapManager.GetWorkingBeatmap(beatmap);
+                                var ruleset = beatmap.Ruleset.CreateInstance();
+                                var mods = acronyms.Select(a => ruleset.CreateModFromAcronym(a) ?? throw new ArgumentException($"no mod {a}")).ToArray();
+                                SelectedMods.Value = mods;
+                                Func<Player> create = () => new OsuRLPlayer(osuRLBridge!, outPath, bridgeInput);
+                                ScreenStack.CurrentScreen.Push(bridgeInput ? new OsuRLPlayerLoader(create) : new PlayerLoader(create));
+                            }
+                            catch (Exception e)
+                            {
+                                error = e.Message;
+                            }
+                            finally
+                            {
+                                started.Set();
+                            }
+                        }, new[] { typeof(SongSelect) });
+                    });
 
                     if (!started.Wait(TimeSpan.FromSeconds(20)))
                         return new JObject { ["ok"] = false, ["error"] = "the game did not get to a screen to start from in 20 s" };
@@ -138,12 +256,37 @@ namespace osu.Game
                     return onGame(() => new JObject { ["ok"] = true, ["front"] = front, ["active"] = Host.IsActive.Value });
 
                 case "menu":
-                    Schedule(() => PerformFromScreen(_ => { }, new[] { typeof(SongSelect) }));
-                    return new JObject { ["ok"] = true };
+                    return onGame(() =>
+                    {
+                        if (osuRLInOnlinePlay)
+                            return new JObject { ["ok"] = false, ["error"] = "the game is in multiplayer: left where it is" };
+
+                        PerformFromScreen(_ => { }, new[] { typeof(SongSelect) });
+                        return new JObject { ["ok"] = true };
+                    });
 
                 default:
                     return new JObject { ["ok"] = false, ["error"] = $"unknown command {name}" };
             }
+        }
+
+        /// <summary>The multiplayer room this copy is in (update thread), or null.</summary>
+        private JObject? osuRLMultiplayerStatus()
+        {
+            var room = MultiplayerClient.Room;
+            if (room == null)
+                return null;
+
+            var me = MultiplayerClient.LocalUser;
+            return new JObject
+            {
+                ["room_id"] = room.RoomID,
+                ["state"] = me?.State.ToString(),
+                ["availability"] = me?.BeatmapAvailability.State.ToString(),
+                ["host"] = room.Host?.User?.Username,
+                ["users"] = room.Users.Count,
+                ["room_state"] = room.State.ToString(),
+            };
         }
 
         private JObject onGame(Func<JObject> work)
