@@ -15,6 +15,7 @@ using osu.Game.Online.API;
 using osu.Game.Online.Rooms;
 using osu.Game.Rulesets.UI;
 using osu.Game.Rulesets.Judgements;
+using osu.Game.Rulesets.Objects;
 using osu.Game.Rulesets.Objects.Types;
 using osu.Game.Rulesets.Replays.Types;
 using osu.Game.Screens.Play;
@@ -34,6 +35,7 @@ namespace osu.Game.OsuRL
 
         private readonly bool bridgeInput;
         private PassThroughInputManager? rulesetInput;
+        private double objectsFrom = double.NegativeInfinity, objectsTo = double.PositiveInfinity;
 
         /// <param name="bridgeInput">Gameplay input from the bridge ("input" commands) instead of the mouse; the play
         /// also goes on when the window is not in front.</param>
@@ -89,6 +91,15 @@ namespace osu.Game.OsuRL
             if (bridgeInput)
                 attachBridgeInput();
 
+            // the student's cursor is on screen from just before the first object appears (the longest approach,
+            // AR0's 1800 ms) to a moment after the last one ends
+            var objects = GameplayState.Beatmap.HitObjects;
+            if (objects.Count > 0)
+            {
+                objectsFrom = objects.Min(h => h.StartTime) - 1800;
+                objectsTo = objects.Max(h => h.GetEndTime()) + 200;
+            }
+
             ScoreProcessor.NewJudgement += onJudgement;
             ScoreProcessor.HasCompleted.BindValueChanged(c =>
             {
@@ -121,9 +132,17 @@ namespace osu.Game.OsuRL
                 rulesetInput.UseParentInput = false;
 
             // lazer shows the ruleset's cursor only while the real mouse hovers the playfield (GlobalCursorDisplay), and
-            // with bridge input nobody is at the mouse: keep the student's cursor shown, wherever the mouse is
-            if (rulesetInput != null && DrawableRuleset.Playfield.Cursor is { } cursor && cursor.State.Value != Visibility.Visible)
-                cursor.Show();
+            // with bridge input nobody is at the mouse: the student's cursor is shown here instead, wherever the mouse is,
+            // but only while the map's objects are on (not over the intro, the skip button or the outro)
+            if (rulesetInput != null && DrawableRuleset.Playfield.Cursor is { } cursor && GameplayClockContainer != null)
+            {
+                double now = GameplayClockContainer.CurrentTime;
+                bool on = !written && now >= objectsFrom && now <= objectsTo;
+                if (on && cursor.State.Value != Visibility.Visible)
+                    cursor.Show();
+                else if (!on && cursor.State.Value == Visibility.Visible)
+                    cursor.Hide();
+            }
 
             if (GameplayClockContainer == null || written)
                 return;

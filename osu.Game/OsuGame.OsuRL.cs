@@ -32,6 +32,19 @@ namespace osu.Game
         private bool osuRLHidesMenuCursor =>
             osuRLHideMenuCursor && (ScreenStack.CurrentScreen is not Player || ScreenStack.CurrentScreen is OsuRLPlayer) && !osuRLInOnlinePlay;
 
+        // background plays too: nobody reads the toasts, and they would sit over the stream (every silent map says its
+        // audio file is missing), so the notification overlay is not drawn; posts still reach it (and the log)
+        private void osuRLUpdateNotifications()
+        {
+            float alpha = osuRLHideMenuCursor && !osuRLInOnlinePlay ? 0 : 1;
+
+            if (Notifications.Alpha != alpha)
+            {
+                Notifications.AlwaysPresent = true; // toasts time out and move to the list while unseen
+                Notifications.Alpha = alpha;
+            }
+        }
+
         // lazer's multiplayer and playlists: the lounge, a room and its song select, its player and results, spectating a
         // room. The same copy sits in rooms (live.room_play) and plays maps of its own between them (live.stream): a
         // person runs the room (cursor shown), and "play" / "menu" would take the game out of it, so they refuse
